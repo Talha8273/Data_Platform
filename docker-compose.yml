@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  # 1. Kalıcı Veritabanımız (PostgreSQL)
+  wanderlog_db:
+    image: postgres:15
+    container_name: wanderlog-postgres-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Talha8293.
+      POSTGRES_DB: wanderlog_data
+    ports:
+      - "5432:5432"
+    volumes:
+      # Verilerin silinmemesi için diskte kalıcı bir alan yaratıyoruz
+      - postgres_veri_alani:/var/lib/postgresql/data
+
+  # 2. Hızlı Önbelleğimiz (Redis)
+  wanderlog_cache:
+    image: redis:alpine
+    container_name: wanderlog-redis-cache
+    ports:
+      - "6379:6379"
+
+# 3. Veri Çeken Uygulamamız (Python)
+  wanderlog_app:
+    build: . # Dockerfile'ın bu klasörde olduğunu söyler
+    container_name: wanderlog-python-app
+    depends_on:
+      - wanderlog_db
+      - wanderlog_cache
+# Kalıcı disk alanını (volume) tanımlıyoruz
+volumes:
+  postgres_veri_alani:
