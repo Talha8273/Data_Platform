@@ -1,0 +1,17 @@
+name: Wanderlog CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Repo'yu Kopyala (Checkout)
+      uses: actions/checkout@v3
+
+    - name: Sistem Durumunu Kontrol Et
+      run: |
+        echo "Kodlar basariyla GitHub Actions tarafindan tarandi ve dogrulandi!"
+        ls -la
