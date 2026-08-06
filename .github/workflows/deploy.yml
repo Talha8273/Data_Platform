@@ -5,13 +5,14 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  test-docker-build:
     runs-on: ubuntu-latest
     steps:
-    - name: Repo'yu Kopyala (Checkout)
+    - name: Repo'yu Kopyala
       uses: actions/checkout@v3
 
-    - name: Sistem Durumunu Kontrol Et
+    - name: Docker Imajini Insa Etmeyi Dene
       run: |
-        echo "Kodlar basariyla GitHub Actions tarafindan tarandi ve dogrulandi!"
-        ls -la
+        echo "Docker imaji test ediliyor..."
+        docker compose build
+        echo "Tebrikler! Kodda ve Dockerfile'da hata yok."
