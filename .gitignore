@@ -1,0 +1,15 @@
+# Çevre değişkenleri (Şifreler)
+.env
+
+# Airflow Logları ve Ön Bellek
+logs/
+__pycache__/
+*.pyc
+
+# IDE Dosyaları
+.vscode/
+
+# Veritabanı Klasörleri (Eğer yanlışlıkla lokale mount edilirse diye)
+pgdata/
+redisdata/
+mongodata/
