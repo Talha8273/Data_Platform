@@ -6,8 +6,9 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: Talha8293.
       POSTGRES_DB: postgres
-    ports:
-      - "5432:5432"
+    # Portları sildik, sadece backend ağına dahil ettik
+    networks:
+      - backend-network
     restart: always
 
   wanderlog-mongodb:
@@ -16,8 +17,8 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: adminpassword123
-    ports:
-      - "27017:27017"
+    networks:
+      - backend-network
     restart: always
     volumes:
       - mongo_data:/data/db
@@ -28,8 +29,8 @@ services:
     environment:
       MARIADB_ROOT_PASSWORD: rootpassword123
       MARIADB_DATABASE: okul_sistemi
-    ports:
-      - "3306:3306"
+    networks:
+      - backend-network
     restart: always
     volumes:
       - mariadb_data:/var/lib/mysql
@@ -37,8 +38,8 @@ services:
   wanderlog-redis-cache:
     image: redis:alpine
     container_name: wanderlog-redis-cache
-    ports:
-      - "6379:6379"
+    networks:
+      - backend-network
     restart: always
 
   wanderlog-python-app:
@@ -47,15 +48,20 @@ services:
     depends_on:
       - wanderlog-postgres-db
       - wanderlog-redis-cache
+    networks:
+      - backend-network
     restart: always
 
   portainer:
     image: portainer/portainer-ce:latest
     container_name: portainer
     ports:
-      - "9000:9000"
+      - "9000:9000" # Arayüzü kullanabilmek için açık kalmalı
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - frontend-network
+      - backend-network
     restart: always
 
   airflow-standalone:
@@ -67,11 +73,14 @@ services:
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-mysql redis
     ports:
-      - "8080:8080"
+      - "8080:8080" # Web arayüzü için açık kalmalı
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
+    networks:
+      - frontend-network # Bizim erişimimiz için
+      - backend-network # Veritabanlarına erişebilmesi için
     command: standalone
 
   elasticsearch:
@@ -81,8 +90,8 @@ services:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
-    ports:
-      - "9200:9200"
+    networks:
+      - backend-network
     volumes:
       - es_data:/usr/share/elasticsearch/data
 
@@ -90,16 +99,19 @@ services:
     image: kibana:8.10.2
     container_name: kibana-lab
     ports:
-      - "5601:5601"
+      - "5601:5601" # Web arayüzü için açık kalmalı
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
     depends_on:
       - elasticsearch
+    networks:
+      - frontend-network
+      - backend-network
 
   filebeat:
     image: elastic/filebeat:8.10.2
     container_name: filebeat-lab
-    user: root # Journald okumak için root yetkisi zorunludur
+    user: root
     volumes:
       - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -107,6 +119,15 @@ services:
     depends_on:
       - elasticsearch
       - kibana
+    networks:
+      - backend-network
+
+# Ağ tanımlamaları
+networks:
+  frontend-network:
+    driver: bridge
+  backend-network:
+    driver: bridge
 
 volumes:
   es_data:
