@@ -1,39 +1,62 @@
 import json
 import re
+import os
+import logging
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 import psycopg2
 
-# DAG'ın çalışma kuralları
+# Configure centralized logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Fetch configurations from environment variables
+DB_HOST = os.getenv("DB_HOST", "wanderlog-postgres-db")
+DB_NAME = os.getenv("DB_NAME", "postgres")
+DB_USER = os.getenv("DB_USER", "postgres")
+
 default_args = {
     'owner': 'data_engineer',
     'depends_on_past': False,
     'start_date': datetime(2023, 1, 1),
-    'retries': 1,
+    'retries': 2,
     'retry_delay': timedelta(minutes=1),
 }
 
-def clean_and_transfer_data():
-    print("Veritabanına bağlanılıyor...")
-    # Şifreyi güvenli secret dosyasından alıyoruz
-    with open('/run/secrets/postgres_password', 'r') as f:
-        pg_password = f.read().strip()
+def get_db_password():
+    try:
+        with open('/run/secrets/postgres_password', 'r') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        logging.error("Secret file not found. Ensure Docker secrets are configured.")
+        return None
 
-    conn = psycopg2.connect(
-        host="wanderlog-postgres-db",
-        database="postgres",
-        user="postgres",
-        password=pg_password
-    )
-    conn.autocommit = False
+def clean_and_transfer_data():
+    logging.info("Initiating data transformation (ETL) pipeline...")
+    pg_password = get_db_password()
+    
+    if not pg_password:
+        raise ValueError("Database password could not be retrieved.")
+
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            database=DB_NAME,
+            user=DB_USER,
+            password=pg_password
+        )
+        conn.autocommit = False
+        logging.info("Successfully connected to PostgreSQL instance.")
+    except psycopg2.OperationalError as e:
+        logging.error(f"Database connection failed: {e}")
+        raise
 
     try:
         with conn.cursor() as cur:
-            # 1. Ham veri tablosuna "işlendi mi?" (is_processed) damgası ekle
+            # 1. Ensure idempotency by tracking processed events
             cur.execute("ALTER TABLE raw_events ADD COLUMN IF NOT EXISTS is_processed BOOLEAN DEFAULT FALSE;")
             
-            # 2. Vitrin (Analytics) tablosunu oluştur
+            # 2. Initialize Analytics (Data Mart) table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS clean_events (
                     id SERIAL PRIMARY KEY,
@@ -45,68 +68,68 @@ def clean_and_transfer_data():
                 )
             """)
 
-            # 3. Sadece YENİ (işlenmemiş) verileri çek
+            # 3. Fetch unprocessed events (Incremental Load)
             cur.execute("SELECT id, payload FROM raw_events WHERE is_processed = FALSE;")
             rows = cur.fetchall()
 
             if not rows:
-                print("İşlenecek yeni veri bulunamadı. Her şey güncel!")
+                logging.info("No new records found for processing. Pipeline is fully synced.")
                 return
 
-            basarili = 0
-            islenen_idler = []
+            successful_inserts = 0
+            processed_ids = []
 
-            # 4. Verileri döngüyle temizle
+            # 4. Transform and load data
             for row in rows:
                 raw_id = row[0]
-                payload = row[1] # JSON verimiz
+                payload = row[1] 
                 
                 try:
                     sehir = payload.get("sehir")
                     canli_fiyat_str = payload.get("canli_fiyat", "")
                     kayit_zamani = payload.get("kayit_zamani")
 
-                    # Kalite Kontrol: "1500 USD" yazısındaki harfleri sil, sadece sayıyı (1500) al
+                    # Data Cleansing: Extract integer from price string (e.g., "1500 USD" -> 1500)
                     fiyat_rakam = int(re.sub(r'[^0-9]', '', canli_fiyat_str))
 
-                    # Temizlenmiş veriyi vitrin tablosuna (clean_events) yaz
+                    # Upsert cleaned data into Data Mart
                     cur.execute("""
                         INSERT INTO clean_events (raw_id, sehir, fiyat_usd, kayit_zamani)
                         VALUES (%s, %s, %s, %s)
                         ON CONFLICT (raw_id) DO NOTHING
                     """, (raw_id, sehir, fiyat_rakam, kayit_zamani))
 
-                    basarili += 1
+                    successful_inserts += 1
                 except Exception as e:
-                    print(f"Hatalı veri atlandı (ID: {raw_id}): {e}")
+                    logging.warning(f"Data validation failed for record ID {raw_id}, skipping. Reason: {e}")
                 finally:
-                    islenen_idler.append(raw_id)
+                    processed_ids.append(raw_id)
 
-            # 5. İşlenen ham verileri "işlendi" olarak işaretle ki bir sonraki sefer tekrar almasın
-            if islenen_idler:
-                cur.execute("UPDATE raw_events SET is_processed = TRUE WHERE id = ANY(%s)", (islenen_idler,))
+            # 5. Mark processed records to prevent duplication in subsequent runs
+            if processed_ids:
+                cur.execute("UPDATE raw_events SET is_processed = TRUE WHERE id = ANY(%s)", (processed_ids,))
 
             conn.commit()
-            print(f"🎉 Rapor: {basarili} yeni kayıt başarıyla temizlendi ve vitrine aktarıldı!")
+            logging.info(f"ETL Summary: Successfully processed and transferred {successful_inserts} records.")
             
     except Exception as e:
         conn.rollback()
-        print(f"Kritik Hata: {e}")
-        raise e
+        logging.error(f"Critical pipeline failure: {e}")
+        raise
     finally:
         conn.close()
+        logging.info("Database connection closed gracefully.")
 
-# Airflow DAG Tanımlaması (Her 5 dakikada bir çalışacak)
+# Airflow DAG Definition
 with DAG(
     'wanderlog_kalite_kontrol_pipeline',
     default_args=default_args,
-    description='Ham Kafka verilerini temizler ve analitik tabloya aktarır',
-    schedule_interval=timedelta(minutes=5), # 5 dakikada bir çalışır
+    description='Extracts, cleans, and loads raw Kafka events into the analytics data mart',
+    schedule_interval=timedelta(minutes=5),
     catchup=False,
 ) as dag:
 
-    # Görev ataması
     temizleme_gorevi = PythonOperator(
-        task_id='ham_veriyi_temizle_ve_aktar',
+        task_id='clean_and_transfer_raw_data',
         python_callable=clean_and_transfer_data,
     )
