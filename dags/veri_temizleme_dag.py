@@ -7,10 +7,8 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 import psycopg2
 
-# Configure centralized logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Fetch configurations from environment variables
 DB_HOST = os.getenv("DB_HOST", "wanderlog-postgres-db")
 DB_NAME = os.getenv("DB_NAME", "postgres")
 DB_USER = os.getenv("DB_USER", "postgres")
@@ -34,7 +32,7 @@ def get_db_password():
 def clean_and_transfer_data():
     logging.info("Initiating data transformation (ETL) pipeline...")
     pg_password = get_db_password()
-    
+
     if not pg_password:
         raise ValueError("Database password could not be retrieved.")
 
@@ -53,10 +51,9 @@ def clean_and_transfer_data():
 
     try:
         with conn.cursor() as cur:
-            # 1. Ensure idempotency by tracking processed events
+
             cur.execute("ALTER TABLE raw_events ADD COLUMN IF NOT EXISTS is_processed BOOLEAN DEFAULT FALSE;")
-            
-            # 2. Initialize Analytics (Data Mart) table
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS clean_events (
                     id SERIAL PRIMARY KEY,
@@ -68,7 +65,6 @@ def clean_and_transfer_data():
                 )
             """)
 
-            # 3. Fetch unprocessed events (Incremental Load)
             cur.execute("SELECT id, payload FROM raw_events WHERE is_processed = FALSE;")
             rows = cur.fetchall()
 
@@ -79,20 +75,17 @@ def clean_and_transfer_data():
             successful_inserts = 0
             processed_ids = []
 
-            # 4. Transform and load data
             for row in rows:
                 raw_id = row[0]
-                payload = row[1] 
-                
+                payload = row[1]
+
                 try:
                     sehir = payload.get("sehir")
                     canli_fiyat_str = payload.get("canli_fiyat", "")
                     kayit_zamani = payload.get("kayit_zamani")
 
-                    # Data Cleansing: Extract integer from price string (e.g., "1500 USD" -> 1500)
                     fiyat_rakam = int(re.sub(r'[^0-9]', '', canli_fiyat_str))
 
-                    # Upsert cleaned data into Data Mart
                     cur.execute("""
                         INSERT INTO clean_events (raw_id, sehir, fiyat_usd, kayit_zamani)
                         VALUES (%s, %s, %s, %s)
@@ -105,13 +98,12 @@ def clean_and_transfer_data():
                 finally:
                     processed_ids.append(raw_id)
 
-            # 5. Mark processed records to prevent duplication in subsequent runs
             if processed_ids:
                 cur.execute("UPDATE raw_events SET is_processed = TRUE WHERE id = ANY(%s)", (processed_ids,))
 
             conn.commit()
             logging.info(f"ETL Summary: Successfully processed and transferred {successful_inserts} records.")
-            
+
     except Exception as e:
         conn.rollback()
         logging.error(f"Critical pipeline failure: {e}")
@@ -120,7 +112,6 @@ def clean_and_transfer_data():
         conn.close()
         logging.info("Database connection closed gracefully.")
 
-# Airflow DAG Definition
 with DAG(
     'wanderlog_kalite_kontrol_pipeline',
     default_args=default_args,

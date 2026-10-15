@@ -5,10 +5,8 @@ import logging
 import psycopg2
 from kafka import KafkaConsumer
 
-# Configure centralized logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Fetch configurations from environment variables (Cloud-native approach)
 DB_HOST = os.getenv("DB_HOST", "wanderlog-postgres-db")
 DB_NAME = os.getenv("DB_NAME", "postgres")
 DB_USER = os.getenv("DB_USER", "postgres")

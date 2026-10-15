@@ -5,10 +5,8 @@ import os
 import logging
 from kafka import KafkaProducer
 
-# Configure centralized logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Fetch configurations from environment variables
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka-lab:29092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "sensor-verileri")
 
