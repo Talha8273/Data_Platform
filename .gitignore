@@ -1,0 +1,12 @@
+# Veritabanı ve Log dosyaları
+*_data/
+logs/
+plugins/
+
+# Şifreler ve ortam değişkenleri
+secrets/
+.env
+
+# Python önbellek dosyaları
+__pycache__/
+*.pyc
